@@ -4,15 +4,15 @@ from sklearn.neighbors import NearestNeighbors
 from scipy.sparse import csr_matrix
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel
-from flask import Flask, request, url_for
+from flask import Flask, request, url_for, jsonify
 
 app = Flask(__name__)
-
+user_ratings = [];
+id = 1;
 
 @app.route("/")
-def hello_world():
-    redirect = False
-    book = ""
+def init_page():
+    updateColabRecs()
     str = """
     <!DOCTYPE html>
 <html lang="en">
@@ -55,6 +55,10 @@ def hello_world():
             overflow-y: auto;
             z-index: 1000;
         }
+        
+        .suggestions-bok:hover{
+            cursor: text;
+        }
 
         .suggestion-item {
             padding: 10px;
@@ -95,13 +99,15 @@ def hello_world():
             margin-top: 10px;
             font-size: 14px;
         }
+        
+
     </style>
 </head>
 <body>
     <div class="search-container">
         <input type="text" id="search-bar" placeholder="Search for books..." oninput="showSuggestions()">
-        <button id="myBtn" onclick="searchBooks()">Search</button>
-
+        <button id="myBtn" onclick="searchBooks()" style="display: none;">Search</button>
+        <div id="suggestions" class="suggestions-box"></div>
     </div>
     <div class="recommendation-section">
         <h2>Books Similar to Your Favorite Book</h2>
@@ -112,12 +118,13 @@ def hello_world():
         <div id="books-you-might-like" class="book-row"></div>
     </div>
     <div class="recommendation-section">
-        <h2>Search Results</h2>
+        <h2>Search Results</h2> 
         <div id="search-results" class="book-row"></div>
     </div>
 
     <script>
         const similarBooks = [
+        
         {
 """
     for i in range(len(titles)):
@@ -128,18 +135,23 @@ def hello_world():
     str += """];
 
         const booksYouMightLike = [
-            { title: "Book A", img: "https://via.placeholder.com/150" },
-            { title: "Book B", img: "https://via.placeholder.com/150" },
-            { title: "Book C", img: "https://via.placeholder.com/150" },
-        ];
+            { """
+
+    for i in range(len(titles2)):
+        str += f'title: "{titles2[i]}", img: "{images2[i]}"'
+        str += "},\n"
+        if (i != len(titles2) - 1):
+            str += '{'
+
+    str += """    ];
         const books = [
             """
 
     for i in range(len(books["title"])):
         if not i == len(books["title"]) - 1:
-            str += f'\"{books["title"][i]}\", '
+            str += f'{{ title: \"{books["title"][i]}\", img: \"{books["image_url"][i]}\" }}, '
         else:
-            str += f'\"{books["title"][i]}\"'
+            str += f'{{ title: \"{books["title"][i]}\", img: \"{books["image_url"][i]}\" }}'
     str += "];"
 
     str += """
@@ -158,9 +170,13 @@ def hello_world():
 
         function searchBooks() {
             const query = document.getElementById('search-bar').value.toLowerCase();
-            const searchResults = similarBooks.concat(booksYouMightLike).filter(book => book.title.toLowerCase().includes(query));
+            const searchResults = books.filter(book => book.title.toLowerCase().includes(query));
             displayBooks(searchResults, 'search-results');
             document.getElementById('suggestions').innerHTML = '';
+            console.log(searchResults.length);
+            if (searchResults.length === 1) {
+                window.location.href = `/rate/${searchResults[0].title}`;
+            }
         }
 
         function showSuggestions() {
@@ -169,13 +185,13 @@ def hello_world():
             suggestionsBox.innerHTML = '';
 
             if (query) {
-                const filteredBooks = books.filter(book => book.toLowerCase().includes(query));
+                const filteredBooks = books.filter(book => book.title.toLowerCase().includes(query));
                 filteredBooks.forEach(book => {
                     const suggestionItem = document.createElement('div');
                     suggestionItem.className = 'suggestion-item';
-                    suggestionItem.textContent = book;
+                    suggestionItem.textContent = book.title;
                     suggestionItem.onclick = () => {
-                        document.getElementById('search-bar').value = book;
+                        document.getElementById('search-bar').value = book.title;
                         suggestionsBox.innerHTML = '';
                         searchBooks();
                     };
@@ -198,15 +214,123 @@ def hello_world():
 </body>
 </html>
 """
-    if redirect:
-        return redirect(url_for('rate_book', book_name=book))
-    else:
-        return f"{str}"
+    return f"{str}"
 
 
 @app.route('/rate/<book_name>')
 def rate_book(book_name):
-    return f"Rating {book_name}"
+    str = """
+    <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Detail</title>
+    <style>
+        body {
+    font - family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .book-detail {
+    text - align: center;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .book-detail img {
+    width: 200px;
+            height: auto;
+            border-radius: 5px;
+        }
+
+        .book-title {
+    margin - top: 10px;
+            font-size: 24px;
+        }
+
+        .rating {
+    margin - top: 20px;
+        }
+
+        .rating span {
+    font - size: 30px;
+            cursor: pointer;
+        }
+
+        .rating span:hover,
+        .rating span.selected {
+    color: gold;
+        }
+    </style>
+</head>
+<body>
+    <div class="book-detail">
+        <img id="book-image" src="" alt="Book Image">
+        <div id="book-title" class="book-title"></div>
+        <div class="rating">
+            <span onclick="rateBook(1)">★</span>
+            <span onclick="rateBook(2)">★</span>
+            <span onclick="rateBook(3)">★</span>
+            <span onclick="rateBook(4)">★</span>
+            <span onclick="rateBook(5)">★</span>
+        </div>
+    </div>
+
+    <script>
+
+        document.getElementById('book-title').textContent = """
+    str += f"\"{book_name}\";"
+    str += """
+        document.getElementById('book-image').src = """
+    str += f"\"{books['image_url'][books['title'].to_list().index(book_name)]}\";"
+    str += """
+    function rateBook(rating) {
+        const bookName = """ + f"\"{book_name}\";" + """
+        const bookId = """ + f"{books['title'].to_list().index(book_name)};" + """ // Get the book's ID based on its title
+
+        // AJAX call to send the rating to the server
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/submit_rating", true);
+        xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState == 4 && xhr.status == 200) {
+                window.location.href = '/';
+            }
+        };
+
+        const data = JSON.stringify({
+            book_id: bookId,
+            rating: rating
+        });
+        xhr.send(data);
+    }
+    </script>
+</body>
+</html>
+
+    """
+    return str;
+
+
+@app.route('/submit_rating', methods=['POST'])
+def submit_rating():
+    global id
+    data = request.get_json()
+    book_id = data['book_id']
+    rating = data['rating']
+
+    user_ratings.append({'book_id': book_id, 'rating': rating})
+    id = book_id
+    return jsonify({"message": "Rating submitted successfully!"})
 
 
 # Load the data
@@ -277,7 +401,20 @@ def get_knn_recommendations(user_ratings, knn_model, user_item_matrix, n_neighbo
 
 
 # Example usage of content-based recommendations
-recommended_books = get_content_recommendations(book_id=744)
+recommended_books = get_content_recommendations(book_id=id)
 titles = recommended_books["title"].to_list()
 images = recommended_books["image_url"].to_list()
+recommended_books2 = get_knn_recommendations(user_ratings, knn, user_item_matrix)
+titles2 = recommended_books2["title"].to_list()
+images2 = recommended_books2["image_url"].to_list()
 
+
+
+def updateColabRecs():
+    global titles2, images2, titles, images
+    recommended_books2 = get_knn_recommendations(user_ratings, knn, user_item_matrix)
+    titles2 = recommended_books2["title"].to_list()
+    images2 = recommended_books2["image_url"].to_list()
+    recommended_books = get_content_recommendations(book_id=id)
+    titles = recommended_books["title"].to_list()
+    images = recommended_books["image_url"].to_list()
